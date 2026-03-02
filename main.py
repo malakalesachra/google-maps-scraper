@@ -1,3 +1,4 @@
+import re
 from playwright.sync_api import sync_playwright
 from dataclasses import dataclass, asdict, field
 import pandas as pd
@@ -15,9 +16,10 @@ class Business:
     phone_number: str = None
     reviews_count: int = None
     reviews_average: float = None
+    summary: str = None ##test
     latitude: float = None
     longitude: float = None
-
+    search_keyword: str = None  # Add this attribute
 
 @dataclass
 class BusinessList:
@@ -42,10 +44,9 @@ class BusinessList:
         Args:
             filename (str): filename
         """
-
         if not os.path.exists(self.save_at):
             os.makedirs(self.save_at)
-        self.dataframe().to_excel(f"output/{filename}.xlsx", index=False)
+        self.dataframe().to_excel(f"{self.save_at}/{filename}.xlsx", index=False)
 
     def save_to_csv(self, filename):
         """saves pandas dataframe to csv file
@@ -53,32 +54,35 @@ class BusinessList:
         Args:
             filename (str): filename
         """
-
         if not os.path.exists(self.save_at):
             os.makedirs(self.save_at)
-        self.dataframe().to_csv(f"output/{filename}.csv", index=False)
+        self.dataframe().to_csv(f"{self.save_at}/{filename}.csv", index=False)
 
-def extract_coordinates_from_url(url: str) -> tuple[float,float]:
+def extract_coordinates_from_url(url: str) -> tuple[float, float]:
     """helper function to extract coordinates from url"""
-    
     coordinates = url.split('/@')[-1].split('/')[0]
     # return latitude, longitude
     return float(coordinates.split(',')[0]), float(coordinates.split(',')[1])
 
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename by removing or replacing invalid characters"""
+    return re.sub(r'[^a-zA-Z0-9_-]', '_', filename)
+
 def main():
-    
     ########
-    # input 
+    # input
     ########
-    
+
+    total = 1000000
+
     # read search from arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--search", type=str)
     args = parser.parse_args()
-    
+
     if args.search:
         search_list = [args.search]
-        
+
     # We set the value to a random big number
         total = 1000000
 
@@ -94,11 +98,11 @@ def main():
             with open(input_file_path, 'r') as file:
             # Read all lines into a list
                 search_list = file.readlines()
-                
+
         if len(search_list) == 0:
             print('Error occured: You must either pass the -s search argument, or add searches to input.txt')
             sys.exit()
-        
+
     ##########
     # scraping
     ##########
@@ -110,9 +114,10 @@ def main():
         page.goto("https://www.google.com/maps", timeout=60000)
         # wait is added for dev phase. remove it later
         # page.wait_for_timeout(5000)
-        
+
         for search_for_index, search_for in enumerate(search_list):
-            print(f"-----\n{search_for_index} - {search_for}".strip())
+            search_for = search_for.strip()
+            print(f"-----\n{search_for_index} - {search_for}")
 
             page.locator('//input[@id="searchboxinput"]').fill(search_for)
             #page.wait_for_timeout(3000)
@@ -131,7 +136,7 @@ def main():
                 page.wait_for_timeout(3000)
 
                 if (
-                    page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()>= total):
+                    page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count() >= total):
                     listings = page.locator(
                         '//a[contains(@href, "https://www.google.com/maps/place")]'
                     ).all()[:total]
@@ -177,11 +182,12 @@ def main():
                     phone_number_xpath = '//button[contains(@data-item-id, "phone:tel:")]//div[contains(@class, "fontBodyMedium")]'
                     review_count_xpath = '//button[@jsaction="pane.reviewChart.moreReviews"]//span'
                     reviews_average_xpath = '//div[@jsaction="pane.reviewChart.moreReviews"]//div[@role="img"]'
-                    
-                    
+                    summary_xpath = '//*[@id="QA0Szd"]/div/div/div[1]/div[3]/div/div[1]/div/div/div[2]/div[6]/button/div[2]/div/div[1]'
+
                     business = Business()
-                   
-                    if len(listing.get_attribute(name_attibute)) >= 1:        
+                    business.search_keyword = search_for  # Set the search keyword
+
+                    if len(listing.get_attribute(name_attibute)) >= 1:
                         business.name = listing.get_attribute(name_attibute)
                     else:
                         business.name = ""
@@ -201,7 +207,7 @@ def main():
                         business.reviews_count = int(
                             page.locator(review_count_xpath).inner_text()
                             .split()[0]
-                            .replace(',','')
+                            .replace(',', '')
                             .strip()
                         )
                     else:
@@ -210,27 +216,29 @@ def main():
                         business.reviews_average = float(
                             page.locator(reviews_average_xpath).get_attribute(name_attibute)
                             .split()[0]
-                            .replace(',','.')
+                            .replace(',', '.')
                             .strip())
                     else:
                         business.reviews_average = ""
-                    
-                    
+                    if page.locator(summary_xpath).count() > 0:
+                        business.summary = page.locator(summary_xpath).all()[0].inner_text() ##test
+                    else:
+                        business.summary = ""
+
                     business.latitude, business.longitude = extract_coordinates_from_url(page.url)
 
                     business_list.business_list.append(business)
                 except Exception as e:
-                    print(f'Error occured: {e}')
-            
+                    print(f'Error occurred: {e}')
+
             #########
             # output
             #########
-
-            business_list.save_to_excel(f"google_maps_data_{search_for}".replace(' ', '_'))
-            business_list.save_to_csv(f"google_maps_data_{search_for}".replace(' ', '_'))
+            sanitized_filename = sanitize_filename(f"google_maps_data_{search_for}".replace(' ', '_'))
+            business_list.save_to_excel(sanitized_filename)
+            business_list.save_to_csv(sanitized_filename)
 
         browser.close()
-
 
 if __name__ == "__main__":
     main()
